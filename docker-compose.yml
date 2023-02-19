@@ -1,0 +1,9 @@
+version: "3"
+
+services:
+  py:
+    build: .
+    container_name: py-traiding
+    working_dir: "/app"
+    volumes:
+      - "./app:/app"
