@@ -8,19 +8,19 @@ from datetime import datetime
 df = pd.read_csv('../datas/BTCUSDT-5m-2023-02-18.csv')
 
 # df['open_time'] = df['open_time'].dt.date
-df['open_time'] = pd.to_datetime(df['open_time'], unit='ms')
+df['Open_time'] = pd.to_datetime(df['Open_time'], unit='ms')
 # df['open_time'] = datetime.fromtimestamp(math.floor(df['open_time'].str))
 # df['open_time'] = pd.to_datetime(df['open_time'], format = '%d.%m.%Y %H:%M:%S')
 
 # print(datetime.fromtimestamp(math.floor(1676678699)))
-df.set_index('open_time', inplace=True)
+df.set_index('Open_time', inplace=True)
 
-df = df[df.high != df.low]
+df = df[df.High != df.Low]
 
 
-df['VWAP'] = ta.vwap(df.high, df.low, df.close, df.volume)
-df['RSI'] = ta.rsi(df.close, length = 16)
-my_bbands = ta.bbands(df.close, length = 14, std = 2.0)
+df['VWAP'] = ta.vwap(df.High, df.Low, df.Close, df.Volume)
+df['RSI'] = ta.rsi(df.Close, length = 16)
+my_bbands = ta.bbands(df.Close, length = 14, std = 2.0)
 df = df.join(my_bbands)
 
 ####
@@ -32,10 +32,10 @@ for row in range(backcandles, len(df)):
     dnt = 1
 
     for i in range(row - backcandles, row + 1):
-        if max(df.open[i], df.close[i]) >= df.VWAP[i]:
+        if max(df.Open[i], df.Close[i]) >= df.VWAP[i]:
             dnt = 0
 
-        if min(df.open[i], df.close[i]) <= df.VWAP[i]:
+        if min(df.Open[i], df.Close[i]) <= df.VWAP[i]:
             upt = 0
     
     if upt == 1 and dnt == 1:
@@ -49,10 +49,10 @@ df['VWAPsignal'] = VWAPsignal
 
 ########
 def TotalSignal(l):
-    if(df.VWAPsignal[l] == 2 and df.close[l] <= df['BBL_14_2.0'][l] and df.RSI[l] < 45):
+    if(df.VWAPsignal[l] == 2 and df.Close[l] <= df['BBL_14_2.0'][l] and df.RSI[l] < 45):
         return 2
     
-    if(df.VWAPsignal[l] == 1 and df.close[l] >= df['BBU_14_2.0'][l] and df.RSI[l] > 55):
+    if(df.VWAPsignal[l] == 1 and df.Close[l] >= df['BBU_14_2.0'][l] and df.RSI[l] > 55):
         return 1
     
     return 0
@@ -70,9 +70,9 @@ df[df.TotalSignal != 0].count()
 ########
 def pointposbreak(x):
     if x['TotalSignal'] == 1:
-        return x['high'] + 1e-4
+        return x['High'] + 1e-4
     elif x['TotalSignal'] == 2:
-        return x['low'] - 1e-4
+        return x['Low'] - 1e-4
     else:
         return np.nan
     
@@ -85,10 +85,10 @@ st = 10400
 dfpl = df[st:st+350]
 dfpl.reset_index(inplace = True)
 fig = go.Figure(data = [go.Candlestick(x = dfpl.index, 
-                                       open = dfpl['open'], 
-                                       high = dfpl['high'], 
-                                       low = dfpl['low'], 
-                                       close = dfpl['close']),
+                                       open = dfpl['Open'], 
+                                       high = dfpl['High'], 
+                                       low = dfpl['Low'], 
+                                       close = dfpl['Close']),
                                        go.Scatter(x = dfpl.index, y = dfpl.VWAP, line = dict(color='blue', width = 1), name = 'VWAP'),
                                        go.Scatter(x = dfpl.index, y = dfpl['BBL_14_2.0'], line = dict(color='green', width = 1), name = 'BBL'),
                                        go.Scatter(x = dfpl.index, y = dfpl['BBU_14_2.0'], line = dict(color='green', width = 1), name = 'BBU')
@@ -99,3 +99,49 @@ fig.add_scatter(x = dfpl.index,
                 marker = dict(size = 4, color = 'MediumPurple'),
                 name = 'Signal')
 fig.show()
+
+###### backtestting
+# dfpl = df[:100].copy()
+dfpl = df.copy()
+
+
+dfpl['ATR'] = ta.atr(dfpl.High, dfpl.Low, dfpl.Close, length = 7)
+
+
+def SIGNAL():
+    return dfpl.TotalSignal
+
+from backtesting import Strategy
+from backtesting import Backtest
+
+class MyStrat(Strategy):
+    initsize = 0.99
+    mysize = initsize
+
+    def init(self):
+        super().init()
+        self.signal1 = self.I(SIGNAL)
+
+    def next(self):
+        super().next()
+        slatr = 1.2*self.data.ATR[-1]
+        TPSLRatio = 1.5
+
+        if len(self.trades) > 0:
+            if self.trades[-1].is_long and self.data.RSI[-1] >= 90:
+                self.trades[-1].close()
+            elif self.trades[-1].is_short and self.data.RSI[-1] <= 10:
+                self.trades[-1].close()
+
+        if self.signal1 == 2 and len(self.trades) == 0:
+            sl1 = self.data.Close[-1] - slatr
+            tp1 = self.data.Close[-1] + slatr * TPSLRatio
+            self.buy(sl = sl1, tp = tp1, size = self.mysize)
+        elif self.signal1 == 1 and len(self.trades) == 0:
+            sl1 = self.data.Close[-1] + slatr
+            tp1 = self.data.Close[-1] - slatr * TPSLRatio
+            self.sell(sl = sl1, tp = tp1, size = self.mysize)
+
+bt = Backtest(dfpl, MyStrat, cash = 10000, margin = 1/10, commission = 0.00)
+stat = bt.run()
+print(stat)
